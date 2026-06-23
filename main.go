@@ -688,9 +688,6 @@ func (p *Pager) draw() {
 			if p.leftCol > 0 && len(fullRunes) > 0 {
 				p.screen.SetContent(lnw, screenRow, '‹', nil, styleWrapMark)
 			}
-		} else if !isFirstRow {
-			// wrap continuation marker in gutter column 0
-			p.screen.SetContent(0, screenRow, '↵', nil, styleWrapMark)
 		}
 	}
 
