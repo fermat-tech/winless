@@ -7,6 +7,8 @@ A `less`-like terminal pager for Windows — single binary, no runtime, no depen
 - Scroll files or piped stdin in the terminal
 - Syntax highlighting for Go, JS/TS, Python, Rust, C/C++, Shell, JSON, YAML, TOML, CSS, HTML, Markdown, Ruby
 - Regex search forward and backward with match highlighting
+- **Mouse drag to select and auto-copy to clipboard** — drag to highlight, text is copied on release
+- **`y` key** — copy the current line to clipboard instantly
 - Follow mode (like `tail -f`) for live log watching
 - Line wrap / chop toggle
 - Optional line numbers
@@ -19,7 +21,9 @@ A `less`-like terminal pager for Windows — single binary, no runtime, no depen
 go install github.com/fermat-tech/winless@latest
 ```
 
-Requires Go 1.21+. Produces a single self-contained `.exe` — no runtime needed.
+Or grab a pre-built `.exe` from the [Releases](https://github.com/fermat-tech/winless/releases) page — no Go toolchain needed.
+
+Requires Go 1.21+ to build from source. Produces a single self-contained `.exe`.
 
 ## Usage
 
@@ -56,6 +60,14 @@ command | winless [options]
 | `/pattern` | Search forward (regex) |
 | `?pattern` | Search backward (regex) |
 | `n` / `N` | Next / previous match |
+
+**Copy**
+
+| Key / Action | Description |
+|--------------|-------------|
+| Mouse drag | Select text; automatically copied to clipboard on release |
+| `y` | Copy current line to clipboard |
+| `Escape` | Clear selection |
 
 **Toggles & Other**
 

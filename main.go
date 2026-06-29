@@ -1,3 +1,28 @@
+// winless is a less-like terminal pager for Windows.
+//
+// It pages files or piped stdin with syntax highlighting, regex search,
+// follow mode (tail -f), mouse-drag copy-to-clipboard, and an in-pager
+// key reference. A single self-contained .exe — no runtime required.
+//
+// Usage:
+//
+//	winless [options] <file>
+//	command | winless [options]
+//
+// Options:
+//
+//	-N, --line-numbers      Show line numbers
+//	-S, --chop-long-lines   Chop long lines (no wrap); toggle with S key
+//	-f, --follow            Start in follow mode (like tail -f)
+//	-h, --help              Show help
+//
+// Key bindings (quick reference):
+//
+//	Navigation   ↑/k ↓/j  PgUp/b PgDn/Space  g=top G=bottom  ←/→ horizontal
+//	Search       /pattern  ?pattern  n=next N=prev
+//	Copy         mouse-drag → auto-copy on release;  y=copy line;  Esc=clear
+//	Toggles      S=wrap/chop  H=syntax  F=follow
+//	Other        h=help  ==file-info  q=quit
 package main
 
 import (
@@ -30,6 +55,7 @@ var (
 	styleStatusBar = tcell.StyleDefault.Background(tcell.ColorNavy).Foreground(tcell.ColorWhite)
 	styleSearch    = tcell.StyleDefault.Background(tcell.ColorDarkGreen).Foreground(tcell.ColorWhite)
 	styleHighlight = tcell.StyleDefault.Background(tcell.ColorYellow).Foreground(tcell.ColorBlack)
+	styleSelection = tcell.StyleDefault.Background(tcell.ColorTeal).Foreground(tcell.ColorWhite)
 	styleLineNum   = tcell.StyleDefault.Foreground(tcell.ColorDarkCyan)
 	styleError     = tcell.StyleDefault.Background(tcell.ColorMaroon).Foreground(tcell.ColorWhite)
 	stylePrompt    = tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset).Bold(true)
@@ -42,6 +68,17 @@ var (
 type drow struct {
 	lineIdx   int // index into p.lines
 	runeStart int // starting rune offset within that line
+}
+
+// ── document position ─────────────────────────────────────────────────────────
+
+type docPos struct {
+	lineIdx int
+	runeOff int
+}
+
+func (a docPos) before(b docPos) bool {
+	return a.lineIdx < b.lineIdx || (a.lineIdx == b.lineIdx && a.runeOff < b.runeOff)
 }
 
 // ── pager state ───────────────────────────────────────────────────────────────
@@ -75,6 +112,12 @@ type Pager struct {
 	inputPrompt rune
 	statusMsg   string
 	statusErr   bool
+
+	// mouse selection
+	selDragging    bool
+	selHasSelection bool
+	selAnchor      docPos
+	selCursor      docPos
 }
 
 // ── entry point ───────────────────────────────────────────────────────────────
@@ -150,7 +193,7 @@ func main() {
 		os.Exit(1)
 	}
 	screen.SetStyle(styleDefault)
-	screen.EnableMouse()
+	screen.EnableMouse(tcell.MouseMotionEvents)
 	screen.Clear()
 
 	p := &Pager{
@@ -202,6 +245,11 @@ func printUsage() {
 	fmt.Println("  F                       Follow mode (like tail -f); any key to stop")
 	fmt.Println("  h                       Show in-pager key reference")
 	fmt.Println("  q / Q                   Quit")
+	fmt.Println()
+	fmt.Println("Copy:")
+	fmt.Println("  Mouse drag              Select text; auto-copied to clipboard on release")
+	fmt.Println("  y                       Copy current line to clipboard")
+	fmt.Println("  Escape                  Clear selection")
 }
 
 // ── file reading ──────────────────────────────────────────────────────────────
@@ -333,6 +381,8 @@ func (p *Pager) handleNavKey(ev *tcell.EventKey) bool {
 	p.statusMsg = ""
 
 	switch ev.Key() {
+	case tcell.KeyEscape:
+		p.selHasSelection = false
 	case tcell.KeyDown, tcell.KeyCtrlN:
 		p.scroll(1)
 	case tcell.KeyUp, tcell.KeyCtrlP:
@@ -395,6 +445,8 @@ func (p *Pager) handleNavKey(ev *tcell.EventKey) bool {
 			} else {
 				p.setStatus("Syntax highlighting off", false)
 			}
+		case 'y':
+			p.copyCurrentLine()
 		case 'F':
 			p.startFollow()
 		case 'h':
@@ -572,11 +624,36 @@ func (p *Pager) findNext(forward bool) {
 // ── mouse ─────────────────────────────────────────────────────────────────────
 
 func (p *Pager) handleMouse(ev *tcell.EventMouse) {
-	switch ev.Buttons() {
-	case tcell.WheelDown:
+	x, y := ev.Position()
+	btns := ev.Buttons()
+
+	switch {
+	case btns&tcell.WheelDown != 0:
 		p.scroll(3)
-	case tcell.WheelUp:
+	case btns&tcell.WheelUp != 0:
 		p.scroll(-3)
+	case btns&tcell.Button1 != 0:
+		pos := p.screenToDocPos(y, x)
+		if !p.selDragging {
+			p.selDragging = true
+			p.selHasSelection = true
+			p.selAnchor = pos
+		}
+		p.selCursor = pos
+	case btns == tcell.ButtonNone:
+		if p.selDragging {
+			p.selDragging = false
+			p.selCursor = p.screenToDocPos(y, x)
+			if text := p.selectionText(); text != "" {
+				if err := writeClipboard(text); err != nil {
+					p.setStatus("Copy failed: "+err.Error(), true)
+				} else {
+					p.setStatus("Copied to clipboard", false)
+				}
+			} else {
+				p.selHasSelection = false
+			}
+		}
 	}
 }
 
@@ -675,6 +752,10 @@ func (p *Pager) draw() {
 					style = styleHighlight
 					break
 				}
+			}
+			// selection overrides everything
+			if p.inSelection(fileLineIdx, visOffset+runeIdx) {
+				style = styleSelection
 			}
 			p.screen.SetContent(col, screenRow, r, nil, style)
 			col++
@@ -838,6 +919,11 @@ func (p *Pager) drawHelp(width, height int) {
 		{"  H", "Toggle syntax highlighting"},
 		{"  F", "Follow mode (tail -f); any key stops"},
 		{"", ""},
+		{"── Copy ────────────────────────", ""},
+		{"  Mouse drag", "Select & auto-copy to clipboard"},
+		{"  y", "Copy current line to clipboard"},
+		{"  Escape", "Clear selection"},
+		{"", ""},
 		{"── Other ───────────────────────", ""},
 		{"  h", "Show this help"},
 		{"  = / Ctrl+G", "Show file info"},
@@ -890,6 +976,95 @@ func (p *Pager) drawHelp(width, height int) {
 	// footer
 	footer := "  press any key to close  "
 	drawStr(startY+boxH-1, startX+2, footer, styleDim)
+}
+
+// ── selection helpers ─────────────────────────────────────────────────────────
+
+func (p *Pager) screenToDocPos(screenRow, screenCol int) docPos {
+	rowIdx := p.topRow + screenRow
+	if rowIdx < 0 {
+		return docPos{0, 0}
+	}
+	if rowIdx >= len(p.drows) {
+		last := len(p.lines) - 1
+		return docPos{last, len([]rune(p.lines[last]))}
+	}
+	dr := p.drows[rowIdx]
+	lnw := p.lineNumWidth()
+	col := screenCol - lnw
+	if col < 0 {
+		col = 0
+	}
+	var runeOff int
+	if p.noWrap {
+		runeOff = p.leftCol + col
+	} else {
+		runeOff = dr.runeStart + col
+	}
+	runes := []rune(p.lines[dr.lineIdx])
+	if runeOff > len(runes) {
+		runeOff = len(runes)
+	}
+	return docPos{dr.lineIdx, runeOff}
+}
+
+func (p *Pager) inSelection(lineIdx, runeOff int) bool {
+	if !p.selHasSelection {
+		return false
+	}
+	lo, hi := p.selAnchor, p.selCursor
+	if hi.before(lo) {
+		lo, hi = hi, lo
+	}
+	pos := docPos{lineIdx, runeOff}
+	return !pos.before(lo) && pos.before(hi)
+}
+
+func (p *Pager) selectionText() string {
+	if !p.selHasSelection {
+		return ""
+	}
+	lo, hi := p.selAnchor, p.selCursor
+	if hi.before(lo) {
+		lo, hi = hi, lo
+	}
+	if lo == hi {
+		return ""
+	}
+	runes := func(i int) []rune { return []rune(p.lines[i]) }
+	clamp := func(r []rune, n int) int {
+		if n > len(r) {
+			return len(r)
+		}
+		return n
+	}
+	if lo.lineIdx == hi.lineIdx {
+		r := runes(lo.lineIdx)
+		return string(r[clamp(r, lo.runeOff):clamp(r, hi.runeOff)])
+	}
+	var b strings.Builder
+	r := runes(lo.lineIdx)
+	b.WriteString(string(r[clamp(r, lo.runeOff):]))
+	for i := lo.lineIdx + 1; i < hi.lineIdx; i++ {
+		b.WriteByte('\n')
+		b.WriteString(p.lines[i])
+	}
+	b.WriteByte('\n')
+	r = runes(hi.lineIdx)
+	b.WriteString(string(r[:clamp(r, hi.runeOff)]))
+	return b.String()
+}
+
+func (p *Pager) copyCurrentLine() {
+	if p.topRow >= len(p.drows) {
+		return
+	}
+	text := p.lines[p.drows[p.topRow].lineIdx]
+	if err := writeClipboard(text); err != nil {
+		p.setStatus("Copy failed: "+err.Error(), true)
+	} else {
+		p.setStatus("Copied line to clipboard", false)
+	}
 }
 
 func (p *Pager) fillRow(row, ch int, style tcell.Style) {
