@@ -256,13 +256,18 @@ func printUsage() {
 
 func readLines(r io.Reader) ([]string, error) {
 	var lines []string
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		line, err := br.ReadString('\n')
+		if len(line) > 0 {
+			lines = append(lines, strings.TrimRight(line, "\r\n"))
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(lines) == 0 {
 		lines = []string{""}
@@ -553,6 +558,8 @@ func (p *Pager) handleInputKey(ev *tcell.EventKey) {
 			_, sz := utf8.DecodeLastRuneInString(p.inputBuf)
 			p.inputBuf = p.inputBuf[:len(p.inputBuf)-sz]
 		}
+	case tcell.KeyCtrlV, tcell.KeyInsert: // Ctrl+V or Shift+Insert (terminals send same Insert escape)
+		p.pasteFromClipboard()
 	case tcell.KeyRune:
 		p.inputBuf += string(ev.Rune())
 	}
@@ -626,6 +633,12 @@ func (p *Pager) findNext(forward bool) {
 func (p *Pager) handleMouse(ev *tcell.EventMouse) {
 	x, y := ev.Position()
 	btns := ev.Buttons()
+
+	// right-click pastes clipboard into search input
+	if btns&tcell.Button2 != 0 && p.inputMode {
+		p.pasteFromClipboard()
+		return
+	}
 
 	switch {
 	case btns&tcell.WheelDown != 0:
@@ -1053,6 +1066,22 @@ func (p *Pager) selectionText() string {
 	r = runes(hi.lineIdx)
 	b.WriteString(string(r[:clamp(r, hi.runeOff)]))
 	return b.String()
+}
+
+func (p *Pager) pasteFromClipboard() {
+	text, err := readClipboard()
+	if err != nil {
+		p.setStatus("Paste failed: "+err.Error(), true)
+		return
+	}
+	// strip newlines — search pattern must be single-line
+	text = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, text)
+	p.inputBuf += text
 }
 
 func (p *Pager) copyCurrentLine() {

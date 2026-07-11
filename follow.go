@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -50,10 +51,15 @@ func follower(screen tcell.Screen, path string, startOffset int64, stopCh <-chan
 				continue
 			}
 			var newLines []string
-			scanner := bufio.NewScanner(f)
-			scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-			for scanner.Scan() {
-				newLines = append(newLines, scanner.Text())
+			br := bufio.NewReaderSize(f, 64*1024)
+			for {
+				line, err := br.ReadString('\n')
+				if len(line) > 0 {
+					newLines = append(newLines, strings.TrimRight(line, "\r\n"))
+				}
+				if err != nil {
+					break
+				}
 			}
 			newOffset, _ := f.Seek(0, io.SeekCurrent)
 			f.Close()
