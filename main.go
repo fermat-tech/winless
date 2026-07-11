@@ -2,27 +2,83 @@
 //
 // It pages files or piped stdin with syntax highlighting, regex search,
 // follow mode (tail -f), mouse-drag copy-to-clipboard, and an in-pager
-// key reference. A single self-contained .exe — no runtime required.
+// key reference overlay. A single self-contained .exe with no runtime
+// or external dependencies required.
 //
-// Usage:
+// # Install
+//
+//	go install github.com/fermat-tech/winless@latest
+//
+// Or download a pre-built binary from the Releases page on GitHub.
+//
+// # Usage
 //
 //	winless [options] <file>
 //	command | winless [options]
 //
-// Options:
+// When no file is given and stdin is a pipe, winless pages stdin.
+//
+// # Options
 //
 //	-N, --line-numbers      Show line numbers
-//	-S, --chop-long-lines   Chop long lines (no wrap); toggle with S key
-//	-f, --follow            Start in follow mode (like tail -f)
-//	-h, --help              Show help
+//	-S, --chop-long-lines   Chop long lines (no wrap); toggle with S key in-pager
+//	-f, --follow            Start in follow mode (like tail -f); any key stops
+//	-h, --help              Print help and exit
 //
-// Key bindings (quick reference):
+// # Navigation
 //
-//	Navigation   ↑/k ↓/j  PgUp/b PgDn/Space  g=top G=bottom  ←/→ horizontal
-//	Search       /pattern  ?pattern  n=next N=prev
-//	Copy         mouse-drag → auto-copy on release;  y=copy line;  Esc=clear
-//	Toggles      S=wrap/chop  H=syntax  F=follow
-//	Other        h=help  ==file-info  q=quit
+//	↑ / k          Scroll up one line
+//	↓ / j          Scroll down one line
+//	PgUp / b       Scroll up one page
+//	PgDn / Space   Scroll down one page
+//	g / Home       Jump to first line
+//	G / End        Jump to last line
+//	← / →          Scroll horizontally (chop mode only)
+//	Mouse wheel    Scroll three lines up or down
+//
+// # Search
+//
+//	/pattern       Search forward (regular expression, case-insensitive)
+//	?pattern       Search backward
+//	n              Jump to next match
+//	N              Jump to previous match
+//
+// While typing a pattern, paste the clipboard into the search box with
+// Ctrl+V, Insert (Shift+Insert), or right-click.
+//
+// # Copy to Clipboard
+//
+//	Mouse drag     Select text; automatically copied to clipboard on release
+//	y              Copy the current top line to the clipboard
+//	Escape         Clear the selection highlight
+//
+// # Toggles and Other Keys
+//
+//	S   Toggle wrap / chop mode (chop truncates long lines; wrap is the default)
+//	H   Toggle syntax highlighting on / off
+//	F   Enter follow mode (live tail); press any key to stop
+//	h   Show the in-pager key reference overlay
+//	=   Show file info (name, current line, total lines, mode)
+//	q   Quit
+//
+// # Syntax Highlighting
+//
+// Language is detected from the file extension. Supported languages:
+// Go, JavaScript, TypeScript, Python, Shell, JSON, YAML, TOML,
+// CSS/SCSS, HTML/XML, Markdown, Rust, C, C++, Ruby.
+//
+// # Follow Mode
+//
+// Follow mode (F key or -f flag) polls the file every 250 ms and appends
+// new lines as they arrive, keeping the view scrolled to the bottom —
+// equivalent to tail -f. It requires a real file; stdin is not supported.
+// Press any key to exit follow mode.
+//
+// # Rename-Friendly
+//
+// The binary reads its own name at startup via os.Args[0], so renaming the
+// .exe changes the name shown in the status bar and help text without
+// recompiling.
 package main
 
 import (
