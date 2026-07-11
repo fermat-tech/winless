@@ -46,6 +46,7 @@ Multiple files may be given; move between them with `:n` / `:p` (see Multi-file 
 | `-i`, `--ignore-case` | Case-insensitive search (default); toggle with `I` |
 | `-f`, `--follow` | Start in follow mode (like `tail -f`) |
 | `-h`, `--help` | Show help |
+| `-V`, `--version` | Show version and exit |
 
 ## Key Bindings
 

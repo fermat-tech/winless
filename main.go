@@ -26,6 +26,7 @@
 //	-i, --ignore-case       Case-insensitive search (default); toggle with I key
 //	-f, --follow            Start in follow mode (like tail -f); any key stops
 //	-h, --help              Print help and exit
+//	-V, --version           Print version and exit
 //
 // # Navigation
 //
@@ -108,6 +109,9 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 )
+
+// version is set to the released tag (e.g. "v1.2.1"). Bump it with each release.
+const version = "v1.2.2"
 
 // ── command name ─────────────────────────────────────────────────────────────
 
@@ -239,6 +243,9 @@ func main() {
 		case "-h", "--help":
 			printUsage()
 			os.Exit(0)
+		case "-V", "--version":
+			printVersion()
+			os.Exit(0)
 		default:
 			if strings.HasPrefix(a, "-") {
 				fmt.Fprintf(os.Stderr, "%s: unknown flag %q\n", cmdName, a)
@@ -332,6 +339,7 @@ func printUsage() {
 	fmt.Println("  -i, --ignore-case       Case-insensitive search (default); toggle with I")
 	fmt.Println("  -f, --follow            Start in follow mode (like tail -f)")
 	fmt.Println("  -h, --help              Show this help")
+	fmt.Println("  -V, --version           Show version and exit")
 	fmt.Println()
 	fmt.Println("Navigation:")
 	fmt.Println("  Arrow keys / j k        Scroll one line")
@@ -368,6 +376,10 @@ func printUsage() {
 	fmt.Println("  Mouse drag              Select text; auto-copied to clipboard on release")
 	fmt.Println("  y                       Copy current line to clipboard")
 	fmt.Println("  Escape                  Clear selection")
+}
+
+func printVersion() {
+	fmt.Printf("%s %s\n", cmdName, version)
 }
 
 // ── file reading ──────────────────────────────────────────────────────────────
