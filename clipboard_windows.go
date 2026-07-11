@@ -43,7 +43,8 @@ func readClipboard() (string, error) {
 	defer procGlobalUnlock.Call(h) //nolint:errcheck
 
 	// find null terminator to determine length
-	p := (*[1 << 20]uint16)(unsafe.Pointer(ptr))
+	base := unsafe.Add(unsafe.Pointer(nil), ptr)
+	p := (*[1 << 20]uint16)(base)
 	var n int
 	for n = 0; n < len(p) && p[n] != 0; n++ {
 	}
@@ -72,7 +73,8 @@ func writeClipboard(text string) error {
 	if ptr == 0 {
 		return err
 	}
-	dst := (*[1 << 20]uint16)(unsafe.Pointer(ptr))[:len(utf16):len(utf16)]
+	base := unsafe.Add(unsafe.Pointer(nil), ptr)
+	dst := (*[1 << 20]uint16)(base)[:len(utf16):len(utf16)]
 	copy(dst, utf16)
 	procGlobalUnlock.Call(h) //nolint:errcheck
 
