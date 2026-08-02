@@ -47,6 +47,7 @@ Multiple files may be given; move between them with `:n` / `:p` (see Multi-file 
 | `-f`, `--follow` | Start in follow mode (like `tail -f`) |
 | `-h`, `--help` | Show help |
 | `-V`, `--version` | Show version and exit |
+| `--` | End of options; treat all remaining args as filenames (e.g. `winless -- -w` opens a file literally named `-w`) |
 
 ## Key Bindings
 

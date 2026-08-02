@@ -27,6 +27,8 @@
 //	-f, --follow            Start in follow mode (like tail -f); any key stops
 //	-h, --help              Print help and exit
 //	-V, --version           Print version and exit
+//	--                      End of options; remaining args are filenames
+//                          (use this to open a file whose name starts with -)
 //
 // # Navigation
 //
@@ -111,7 +113,7 @@ import (
 )
 
 // version is set to the released tag (e.g. "v1.2.1"). Bump it with each release.
-const version = "v1.2.2"
+const version = "v1.2.3"
 
 // ── command name ─────────────────────────────────────────────────────────────
 
@@ -229,9 +231,16 @@ func main() {
 	startFollow := false
 	caseInsensitive := true
 	var filenames []string
+	optionsEnded := false
 
 	for _, a := range args {
+		if optionsEnded {
+			filenames = append(filenames, a)
+			continue
+		}
 		switch a {
+		case "--":
+			optionsEnded = true
 		case "-N", "--line-numbers":
 			showLineNum = true
 		case "-S", "--chop-long-lines":
@@ -340,6 +349,7 @@ func printUsage() {
 	fmt.Println("  -f, --follow            Start in follow mode (like tail -f)")
 	fmt.Println("  -h, --help              Show this help")
 	fmt.Println("  -V, --version           Show version and exit")
+	fmt.Println("  --                      End of options; remaining args are filenames")
 	fmt.Println()
 	fmt.Println("Navigation:")
 	fmt.Println("  Arrow keys / j k        Scroll one line")
