@@ -110,10 +110,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
+	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 )
 
-// version is set to the released tag (e.g. "v1.2.1"). Bump it with each release.
-const version = "v1.2.3"
+// version is the released tag. A plain `go build` reports this literal;
+// release binaries stamp the actual tag via -ldflags "-X main.version=vX.Y.Z".
+var version = "v1.2.4"
 
 // ── command name ─────────────────────────────────────────────────────────────
 
@@ -394,9 +397,65 @@ func printVersion() {
 
 // ── file reading ──────────────────────────────────────────────────────────────
 
+// decodeUTF16IfNeeded sniffs the start of r for a UTF-16 byte-order mark or,
+// failing that, the alternating-NUL-byte pattern typical of UTF-16 ASCII/Latin
+// text with no BOM (many native Windows tools — wsl.exe among them — write
+// UTF-16LE to a redirected/piped stdout with no BOM at all). If detected, r is
+// wrapped in a transcoder to UTF-8; otherwise it is returned unchanged.
+func decodeUTF16IfNeeded(r io.Reader) io.Reader {
+	br := bufio.NewReaderSize(r, 64*1024)
+	sample, _ := br.Peek(4096)
+
+	if len(sample) >= 2 && sample[0] == 0xFF && sample[1] == 0xFE {
+		return transform.NewReader(br, unicode.UTF16(unicode.LittleEndian, unicode.ExpectBOM).NewDecoder())
+	}
+	if len(sample) >= 2 && sample[0] == 0xFE && sample[1] == 0xFF {
+		return transform.NewReader(br, unicode.UTF16(unicode.BigEndian, unicode.ExpectBOM).NewDecoder())
+	}
+
+	if little, ok := looksLikeUTF16NoBOM(sample); ok {
+		endian := unicode.BigEndian
+		if little {
+			endian = unicode.LittleEndian
+		}
+		return transform.NewReader(br, unicode.UTF16(endian, unicode.IgnoreBOM).NewDecoder())
+	}
+	return br
+}
+
+// looksLikeUTF16NoBOM heuristically detects BOM-less UTF-16 ASCII/Latin-1
+// text: consistently zero high (LE) or low (BE) bytes across a sample of
+// 16-bit code units, with the other side rarely zero. ok is false when the
+// sample is too short or doesn't show a clear pattern (plain UTF-8 included).
+func looksLikeUTF16NoBOM(sample []byte) (little bool, ok bool) {
+	n := len(sample) &^ 1 // truncate to even length
+	if n < 32 {
+		return false, false
+	}
+	var zeroOdd, zeroEven int
+	pairs := n / 2
+	for i := 0; i < n; i += 2 {
+		if sample[i] == 0 {
+			zeroEven++
+		}
+		if sample[i+1] == 0 {
+			zeroOdd++
+		}
+	}
+	oddRatio := float64(zeroOdd) / float64(pairs)
+	evenRatio := float64(zeroEven) / float64(pairs)
+	if oddRatio > 0.6 && evenRatio < 0.2 {
+		return true, true // little-endian: low byte set, high byte zero
+	}
+	if evenRatio > 0.6 && oddRatio < 0.2 {
+		return false, true // big-endian
+	}
+	return false, false
+}
+
 func readLines(r io.Reader) ([]string, error) {
 	var lines []string
-	br := bufio.NewReaderSize(r, 64*1024)
+	br := bufio.NewReaderSize(decodeUTF16IfNeeded(r), 64*1024)
 	for {
 		line, err := br.ReadString('\n')
 		if len(line) > 0 {
