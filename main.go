@@ -116,7 +116,7 @@ import (
 
 // version is the released tag. A plain `go build` reports this literal;
 // release binaries stamp the actual tag via -ldflags "-X main.version=vX.Y.Z".
-var version = "v1.2.4"
+var version = "v1.2.5"
 
 // ── command name ─────────────────────────────────────────────────────────────
 

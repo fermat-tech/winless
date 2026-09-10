@@ -1,7 +1,9 @@
 package main
 
 import (
+	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -25,9 +27,24 @@ const (
 	gmemMoveable  = 0x0002
 )
 
+// openClipboard retries OpenClipboard briefly: another process — Windows'
+// own clipboard history, PowerToys, a clipboard manager — can transiently
+// hold the clipboard, and OpenClipboard has no built-in wait.
+func openClipboard() error {
+	var err error
+	for i := 0; i < 10; i++ {
+		var r uintptr
+		r, _, err = procOpenClipboard.Call(0)
+		if r != 0 {
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return err
+}
+
 func readClipboard() (string, error) {
-	r, _, err := procOpenClipboard.Call(0)
-	if r == 0 {
+	if err := openClipboard(); err != nil {
 		return "", err
 	}
 	defer procCloseClipboard.Call() //nolint:errcheck
@@ -52,8 +69,13 @@ func readClipboard() (string, error) {
 }
 
 func writeClipboard(text string) error {
-	r, _, err := procOpenClipboard.Call(0)
-	if r == 0 {
+	// CF_UNICODETEXT lines are conventionally CRLF-terminated (MSDN); a bare
+	// LF is a deviation some paste consumers mishandle or drop entirely.
+	// Normalize first so a prior CRLF isn't doubled to CRCRLF.
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\n", "\r\n")
+
+	if err := openClipboard(); err != nil {
 		return err
 	}
 	defer procCloseClipboard.Call() //nolint:errcheck
@@ -78,7 +100,7 @@ func writeClipboard(text string) error {
 	copy(dst, utf16)
 	procGlobalUnlock.Call(h) //nolint:errcheck
 
-	r, _, err = procSetClipboardData.Call(cfUnicodeText, h)
+	r, _, err := procSetClipboardData.Call(cfUnicodeText, h)
 	if r == 0 {
 		return err
 	}
