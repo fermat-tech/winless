@@ -116,7 +116,7 @@ import (
 
 // version is the released tag. A plain `go build` reports this literal;
 // release binaries stamp the actual tag via -ldflags "-X main.version=vX.Y.Z".
-var version = "v1.2.6"
+var version = "v1.2.7"
 
 // ── command name ─────────────────────────────────────────────────────────────
 
@@ -1123,9 +1123,35 @@ func (p *Pager) handleMouse(ev *tcell.EventMouse) {
 // ── scrolling ─────────────────────────────────────────────────────────────────
 
 func (p *Pager) scroll(delta int) {
+	oldTop := p.topRow
 	p.topRow += delta
 	p.clampTop()
-	p.syncCurLine()
+	if p.topRow != oldTop {
+		// viewport actually moved: curLine follows the new top line, as
+		// it always has.
+		p.syncCurLine()
+		return
+	}
+	// Viewport is pinned (start or end of content, or the whole file
+	// already fits on one screen) — clampTop makes that correct for
+	// scrolling, but it also means syncCurLine would silently leave
+	// curLine stuck, so single-line j/k/arrow presses could never reach
+	// any line past whatever's already on screen. For exactly a one-line
+	// nudge, move curLine itself within the fully-visible remainder, so
+	// individual lines in the final page (or a file shorter than one
+	// screen) stay reachable one at a time for 'y'. Page-sized scrolls
+	// (space, PgDn/PgUp, d/u, mouse wheel) don't have a single "next
+	// line" to guess at, so they're deliberately excluded.
+	switch delta {
+	case 1:
+		if p.curLine < len(p.lines)-1 {
+			p.curLine++
+		}
+	case -1:
+		if p.curLine > 0 {
+			p.curLine--
+		}
+	}
 }
 
 // syncCurLine re-anchors curLine to whatever line is now at the top of the
