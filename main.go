@@ -116,7 +116,7 @@ import (
 
 // version is the released tag. A plain `go build` reports this literal;
 // release binaries stamp the actual tag via -ldflags "-X main.version=vX.Y.Z".
-var version = "v1.2.5"
+var version = "v1.2.6"
 
 // ── command name ─────────────────────────────────────────────────────────────
 
@@ -189,7 +189,14 @@ type Pager struct {
 	fileSize   int64  // size at open time, for follow offset
 	lang       string // detected language for syntax highlighting
 	topRow     int    // first visible display row (index into drows)
-	leftCol    int    // horizontal scroll offset (no-wrap mode only)
+	curLine    int    // yank target for 'y': exact file line most recently navigated
+	// to (Ng/NG, search match). Ordinary scrolling keeps it synced to
+	// drows[topRow].lineIdx. It exists because topRow is clamped to the
+	// valid scroll range (clampTop), so a line inside the final page
+	// (including any file shorter than one screen) can never reach the
+	// top of the screen — without curLine, 'y' would silently yank the
+	// wrong line whenever that clamp kicks in.
+	leftCol int // horizontal scroll offset (no-wrap mode only)
 	showLineNum bool  // -N flag
 	noWrap      bool  // -S flag: chop long lines instead of wrapping
 	syntaxOn    bool  // syntax highlighting toggle (H key)
@@ -624,8 +631,10 @@ func (p *Pager) handleNavKey(ev *tcell.EventKey) bool {
 	case tcell.KeyHome:
 		p.topRow = 0
 		p.leftCol = 0
+		p.syncCurLine()
 	case tcell.KeyEnd:
 		p.topRow = max(0, len(p.drows)-pageSize)
+		p.syncCurLine()
 	case tcell.KeyCtrlG:
 		p.showFileInfo()
 	case tcell.KeyRune:
@@ -651,6 +660,7 @@ func (p *Pager) handleNavKey(ev *tcell.EventKey) bool {
 			} else {
 				p.topRow = 0
 				p.leftCol = 0
+				p.syncCurLine()
 			}
 		case 'G':
 			if numPrefix != "" {
@@ -658,6 +668,7 @@ func (p *Pager) handleNavKey(ev *tcell.EventKey) bool {
 				p.jumpToLine(n - 1)
 			} else {
 				p.topRow = max(0, len(p.drows)-pageSize)
+				p.syncCurLine()
 			}
 		case 'p':
 			if numPrefix != "" {
@@ -665,6 +676,7 @@ func (p *Pager) handleNavKey(ev *tcell.EventKey) bool {
 			} else {
 				p.topRow = 0
 				p.leftCol = 0
+				p.syncCurLine()
 			}
 		case '%':
 			if numPrefix != "" {
@@ -712,7 +724,11 @@ func (p *Pager) handleNavKey(ev *tcell.EventKey) bool {
 	return false
 }
 
-// jumpToLine scrolls so that lineIdx (0-based) is at the top.
+// jumpToLine scrolls so that lineIdx (0-based) is at the top, when the
+// scroll range allows it — clampTop still applies, since a line within the
+// document's final page can't reach the top with room to spare. curLine
+// always records the exact requested line regardless of that clamp, so 'y'
+// still yanks the right line even when the view couldn't move to match.
 func (p *Pager) jumpToLine(lineIdx int) {
 	if lineIdx < 0 {
 		lineIdx = 0
@@ -720,6 +736,7 @@ func (p *Pager) jumpToLine(lineIdx int) {
 	if lineIdx >= len(p.lines) {
 		lineIdx = len(p.lines) - 1
 	}
+	p.curLine = lineIdx
 	p.topRow = p.firstRowForLine(lineIdx)
 	p.clampTop()
 }
@@ -752,6 +769,7 @@ func (p *Pager) startFollow() {
 	p.followStop = make(chan struct{})
 	_, height := p.screen.Size()
 	p.topRow = max(0, len(p.drows)-(height-1))
+	p.syncCurLine()
 	go follower(p.screen, p.filepath, p.fileSize, p.followStop)
 }
 
@@ -778,6 +796,7 @@ func (p *Pager) appendLines(newLines []string) {
 	cw := width - p.lineNumWidth()
 	p.buildDrows(cw)
 	p.topRow = max(0, len(p.drows)-(height-1))
+	p.syncCurLine()
 }
 
 func (p *Pager) toggleWrap() {
@@ -976,6 +995,7 @@ func (p *Pager) loadFile(entry fileEntry) error {
 	p.fileSize = fi.Size()
 	p.lang = detectLang(entry.name)
 	p.topRow = 0
+	p.curLine = 0
 	p.leftCol = 0
 	p.selHasSelection = false
 	width, _ := p.screen.Size()
@@ -1021,15 +1041,16 @@ func (p *Pager) findNext(forward bool) {
 		p.setStatus("No search pattern", true)
 		return
 	}
-	curLine := 0
+	anchor := 0
 	if p.topRow < len(p.drows) {
-		curLine = p.drows[p.topRow].lineIdx
+		anchor = p.drows[p.topRow].lineIdx
 	}
 	n := len(p.lines)
 
 	search := func(start, end, step int) bool {
 		for i := start; i != end; i += step {
 			if p.searchRe.MatchString(p.lines[i]) {
+				p.curLine = i
 				p.topRow = p.firstRowForLine(i)
 				return true
 			}
@@ -1038,18 +1059,18 @@ func (p *Pager) findNext(forward bool) {
 	}
 
 	if forward {
-		if search(curLine+1, n, 1) {
+		if search(anchor+1, n, 1) {
 			return
 		}
-		if search(0, curLine, 1) {
+		if search(0, anchor, 1) {
 			p.setStatus("Search wrapped", false)
 			return
 		}
 	} else {
-		if search(curLine-1, -1, -1) {
+		if search(anchor-1, -1, -1) {
 			return
 		}
-		if search(n-1, curLine, -1) {
+		if search(n-1, anchor, -1) {
 			p.setStatus("Search wrapped", false)
 			return
 		}
@@ -1104,6 +1125,17 @@ func (p *Pager) handleMouse(ev *tcell.EventMouse) {
 func (p *Pager) scroll(delta int) {
 	p.topRow += delta
 	p.clampTop()
+	p.syncCurLine()
+}
+
+// syncCurLine re-anchors curLine to whatever line is now at the top of the
+// screen. Call after any ordinary scroll (not a line-specific jump, which
+// sets curLine itself) so 'y' keeps yanking the visibly top line, matching
+// its behavior before curLine existed.
+func (p *Pager) syncCurLine() {
+	if p.topRow < len(p.drows) {
+		p.curLine = p.drows[p.topRow].lineIdx
+	}
 }
 
 func (p *Pager) clampTop() {
@@ -1510,10 +1542,10 @@ func (p *Pager) pasteFromClipboard() {
 }
 
 func (p *Pager) copyCurrentLine() {
-	if p.topRow >= len(p.drows) {
+	if p.curLine < 0 || p.curLine >= len(p.lines) {
 		return
 	}
-	text := p.lines[p.drows[p.topRow].lineIdx]
+	text := p.lines[p.curLine]
 	if err := writeClipboard(text); err != nil {
 		p.setStatus("Copy failed: "+err.Error(), true)
 	} else {
